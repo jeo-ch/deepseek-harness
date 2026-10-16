@@ -1,0 +1,29 @@
+name: Sync deepseek-harness to Gitee
+
+on:
+  schedule:
+    # 定时任务：每 6 小时同步一次 (UTC 时间)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    # 支持手动触发
+
+jobs:
+  sync-to-gitee:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitHub Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取完整历史
+
+      - name: Sync to Gitee
+        run: |
+          # 清理旧 remote
+          git remote remove gitee 2>/dev/null || true
+          
+          # 添加 Gitee remote（注意这里已替换为 deepseek-harness）
+          git remote add gitee https://${{ secrets.GITEE_USERNAME }}:${{ secrets.GITEE_TOKEN }}@gitee.com/${{ secrets.GITEE_USERNAME }}/deepseek-harness.git
+          
+          # 推送所有分支和标签
+          git push -f gitee --all
+          git push -f gitee --tags
