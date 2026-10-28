@@ -1,0 +1,279 @@
+name: Desktop builds · unsigned
+
+# Builds an installable Desktop artifact for every supported architecture on
+# ordinary GitHub-hosted runners. Unsigned builds need no Apple certificate,
+# Apple account, update service, or Windows signing token, so the workflow also
+# runs for pull requests from forks. Signed releases stay in the manual
+# macos-package.yml and windows-package.yml workflows.
+#
+# Artifacts land under apps/desktop/.desktop-build/targets/<target>/unsigned-artifacts/;
+# the Desktop package scripts own preparation, smoke checks, and the file names.
+#
+# Publish only from a release tag. The running app resolves a profile's installed
+# packages before its own bundled ones, so an app built from a branch head whose
+# bundled `@deepseek-ai/dsh-*` packages lead the npm-published copies makes every
+# profile load the older npm copy — a missing `ProjectionHandle.stateOf`, for
+# example. A `dsh-v*` tag push publishes into that tag's release; a manual run
+# packages the requested ref (default: the latest `dsh-v*` tag) into the rolling
+# `desktop-build-v<version>` prerelease, replacing the assets of the same name.
+# Branch pushes verify packaging without publishing, keeping the installers that
+# outlive the 14-day Actions retention tied to a released commit.
+
+on:
+  push:
+    branches: [master, main]
+    # Release tags publish the same unsigned installers.
+    tags: ['dsh-v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag, branch, or commit to package (default: the latest dsh-v* tag)'
+        type: string
+        required: false
+        default: ''
+      publish_release:
+        description: 'Publish the installers to a GitHub release; uncheck for Actions artifacts only'
+        type: boolean
+        default: true
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-builds-${{ github.workflow }}-${{ github.ref }}
+  # A superseded pull-request revision has no value; a push or tag keeps its
+  # in-flight run so every published revision still yields artifacts.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  prepare:
+    name: Resolve source ref
+    # Always runs so `package` keeps a satisfied dependency; a push or pull
+    # request packages its own SHA without any resolution step.
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.requested.outputs.ref || steps.latest.outputs.ref }}
+    steps:
+      # A full clone lets the steps below inspect every branch and tag. A push or
+      # pull request packages its own SHA, so it needs neither the clone nor a
+      # resolved name.
+      - uses: actions/checkout@v7.0.1
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # `actions/checkout` reports a name that resolves to nothing only as a `git`
+      # exit code, so a typo in the ref input would fail three package jobs with
+      # the same opaque error. Name the missing ref here instead.
+      - name: Verify the requested ref
+        id: requested
+        if: github.event_name == 'workflow_dispatch' && inputs.ref != ''
+        shell: bash
+        env:
+          REQUESTED_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          for candidate in "refs/tags/$REQUESTED_REF^{commit}" "refs/remotes/origin/$REQUESTED_REF^{commit}" "$REQUESTED_REF^{commit}"; do
+            if git rev-parse --verify --quiet "$candidate" > /dev/null; then
+              echo "ref=$REQUESTED_REF" >> "$GITHUB_OUTPUT"
+              echo "Packaging \`$REQUESTED_REF\`." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          echo "::error::Ref '$REQUESTED_REF' is not a tag, branch, or commit in this repository."
+          {
+            echo "\`$REQUESTED_REF\` is not a tag, branch, or commit in this repository."
+            echo
+            echo "Release tags available here:"
+            git tag --list 'dsh-v*' --sort=-v:refname | head -5 | sed 's/.*/- `&`/'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Resolve the latest release tag
+        id: latest
+        # A skipped job would skip every job that needs it, so the condition
+        # belongs on the steps instead.
+        if: github.event_name == 'workflow_dispatch' && inputs.ref == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref=$(git describe --tags --abbrev=0 --match 'dsh-v*' || true)
+          if [ -z "$ref" ]; then
+            echo "::error::No dsh-v* tag is available; push a release tag or pass the ref input."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Packaging \`$ref\`." >> "$GITHUB_STEP_SUMMARY"
+
+  package:
+    name: Package ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-latest is Apple Silicon; macos-15-intel is a native x64 host,
+          # so each target runs without cross-architecture emulation.
+          - target: mac-arm64
+            runner: macos-latest
+            pattern: '*.dmg'
+          - target: mac-x64
+            runner: macos-15-intel
+            pattern: '*.dmg'
+          - target: win-x64
+            runner: windows-2025
+            pattern: '*.exe'
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.ref || github.ref }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v5.0.0
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Electron, the locked Node interpreter, the Python standalone build, and
+      # every wheel are version-pinned by hash, so the cache is keyed on the
+      # lock inputs rather than a build version.
+      - name: Cache prepared interpreter and runtime downloads
+        uses: actions/cache@v6.1.0
+        with:
+          path: apps/desktop/.desktop-build/downloads
+          key: desktop-downloads-${{ matrix.target }}-${{ hashFiles('scripts/primary-runtime/lock.json', 'apps/desktop/package.json') }}
+          restore-keys: |
+            desktop-downloads-${{ matrix.target }}-
+
+      # Windows packaging always reads apps/desktop/.env.windows, even unsigned.
+      # The mandatory-update service is required by schema, so this file names
+      # the reserved .invalid TLD: it never resolves, the policy check reports
+      # itself unavailable, and the application stays usable without updates.
+      - name: Write Windows packaging settings
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          @'
+          DSH_DESKTOP_APP_ID=com.deepseek.dsh
+          DSH_DESKTOP_AUTO_UPDATE_ENV=test
+          DOWNLOAD_TEST_ORIGIN=
+          DOWNLOAD_TEST_RELEASE_ID=
+          DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=https://desktop.invalid
+          DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"allowedAuthOrigins":["https://login.invalid"]}'
+          '@ | Set-Content -Encoding utf8 apps/desktop/.env.windows
+
+      - name: Check packaging configuration and toolchain
+        run: pnpm --dir apps/desktop run package -- ${{ matrix.target }} --unsigned --check
+
+      - name: Build unsigned installer
+        run: pnpm --dir apps/desktop run package -- ${{ matrix.target }} --unsigned
+
+      - name: Upload installer
+        if: success()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dsh-desktop-${{ matrix.target }}-${{ github.run_number }}
+          include-hidden-files: true
+          path: apps/desktop/.desktop-build/targets/${{ matrix.target }}/unsigned-artifacts/${{ matrix.pattern }}
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload packaging diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          # A separate prefix keeps this out of the release job's `dsh-desktop-*` download.
+          name: dsh-packaging-logs-${{ matrix.target }}-${{ github.run_number }}
+          include-hidden-files: true
+          path: apps/desktop/.desktop-build/packaging-runs/
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
+    name: Attach installers to a GitHub release
+    needs: [prepare, package]
+    # Only a release tag publishes automatically. A manual run publishes when asked,
+    # and the notes warn when its source ref is not a `dsh-v*` tag. Fork pull
+    # requests have a read-only token, and their builds are throwaway.
+    if: >-
+      (github.event_name == 'push' && github.ref_type == 'tag')
+      || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.ref || github.ref }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: dsh-desktop-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Write checksums and release notes
+        id: meta
+        env:
+          SOURCE_REF: ${{ needs.prepare.outputs.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="desktop-build-v$version"
+          fi
+          case "$SOURCE_REF" in
+            dsh-v*) ;;
+            *)
+              echo "::warning::Source $SOURCE_REF is not a dsh-v* release tag; its bundled core packages may not match the npm-published ones a profile installs."
+              ;;
+          esac
+          ( cd release-assets && sha256sum -- *.dmg *.exe > SHA256SUMS )
+          {
+            echo "Unsigned desktop installers for DeepSeek Harness \`$version\`, built from \`$SOURCE_REF\` (\`$GITHUB_SHA\`) by [run $GITHUB_RUN_NUMBER]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            echo
+            for asset in release-assets/*.dmg release-assets/*.exe; do
+              echo "- \`$(basename "$asset")\`"
+            done
+            echo
+            echo "These builds are **not code-signed or notarized** and do not carry automatic updates. macOS blocks the first launch: allow it under System Settings → Privacy & Security, or run \`xattr -dr com.apple.quarantine \"/Applications/DeepSeek Harness.app\"\`. Windows shows a SmartScreen prompt: choose More info → Run anyway."
+            echo
+            echo "Verify the download against \`SHA256SUMS\` in this release."
+          } > release-notes.md
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/*.dmg release-assets/*.exe release-assets/SHA256SUMS --clobber
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
+            gh release create "$RELEASE_TAG" --verify-tag --title "Desktop builds $RELEASE_TAG" --notes-file release-notes.md release-assets/*.dmg release-assets/*.exe release-assets/SHA256SUMS
+          else
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --title "Unsigned desktop $RELEASE_VERSION" --notes-file release-notes.md release-assets/*.dmg release-assets/*.exe release-assets/SHA256SUMS
+          fi
+          echo "Release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
