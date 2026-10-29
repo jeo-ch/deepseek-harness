@@ -170,6 +170,19 @@ export function barePackageName(request: string): string | undefined {
   return second < 0 ? request : request.slice(0, second)
 }
 
+/**
+ * Package names the running installation owns: the Harness packages and the Cordis runtime, whose module instances
+ * carry service registrations the host shares with every Loader plugin. A copy of one of these names inside a profile
+ * never precedes the installation copy, so a profile installed by an earlier release keeps working after an upgrade.
+ * @param name - bare package name.
+ * @returns whether the installation owns the name.
+ */
+function installationOwnedName(name: string): boolean {
+  return name.startsWith('@deepseek-ai/dsh-')
+    || name === '@deepseek-ai/cordis' || name.startsWith('@deepseek-ai/cordis-')
+    || name === '@deepseek-ai/cosmokit' || name === '@deepseek-ai/schemastery'
+}
+
 /** The JavaScript and native real paths of an existing directory; none for a directory that no longer exists. */
 function realSpellings(path: string): string[] {
   try {
@@ -586,6 +599,13 @@ class ResolutionRouter {
     if (layer.kind === 'linked') return this.routeLinked(request, name, parent, resolution, flavor, cjs)
 
     const target = resolution.entries.get(name)
+    // A Harness or Cordis name answers from the running installation: a copy inside the profile is a duplicate that
+    // would register its own service instances against a host built from different package versions.
+    if (target?.scope === 'installation' && installationOwnedName(name)) {
+      const state: ResolutionRouteState = { route: { kind: 'interception', entry: target, after: layer.after } }
+      if (memo) requests.set(request, state)
+      return state
+    }
     const candidates: string[] = []
     const localSearchPaths: string[] = []
     for (const searchPath of createRequire(parent).resolve.paths(name) as string[]) {
@@ -680,6 +700,8 @@ class ResolutionRouter {
     const name = barePackageName(request)
     const { layer } = parentRoutes
     if (name === undefined || layer.kind !== 'profile' || !layer.active || !resolution.localPackageNames.has(name)) return undefined
+    // The shortcut skips the interception layer, so an installation-owned name must still reach the scoped lookup.
+    if (installationOwnedName(name)) return undefined
     const state = { route: { kind: 'native' as const } }
     parentRoutes.requests.set(request, state)
     return state

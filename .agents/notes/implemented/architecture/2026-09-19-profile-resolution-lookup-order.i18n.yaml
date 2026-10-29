@@ -18,14 +18,14 @@
   en: 197a263bc0152b74
   zh: ab05b5033f0a74e0
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/decision/part-1-resolution-rules/2-the-interception-layer-the-runtime-resolution-occupies-dsh-home-profiles-node-modules-package:
-  en: 7acd592cb967f08f
-  zh: 5b20fd69c832287b
+  en: 53c010cc42c471cc
+  zh: 093e6b1e363e3672
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/decision/part-1-resolution-rules/3-linked-directories-peer-interception-at-each-ancestor-position:
   en: 8b0ded021ddb87b4
   zh: 2f4d5c33dadf50e7
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/decision/part-1-resolution-rules/4-what-the-interception-layer-holds-the-runtime-resolution-s-scan-contents:
-  en: 5fffd66f08d4b977
-  zh: 020ef8953b20cc8a
+  en: a63edab4e9467073
+  zh: 42262048d36b6014
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/decision/part-1-resolution-rules/5-hook-coverage:
   en: 644f6f9a6ff8d6c8
   zh: 7a81f928551e9041
@@ -48,17 +48,17 @@
   en: 35f27b53d995d59f
   zh: 58a47c7bfced79a0
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/decision/part-3-developer-integration-guide/1-normal-installation:
-  en: d0bed60317e6e3a8
-  zh: 5714160678adc049
+  en: 14f8512278a5a8c8
+  zh: dfd7b07109fe191f
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/decision/part-3-developer-integration-guide/2-development-mode-the-plugin-repository-is-outside-the-profile-tree:
   en: 22259a568693c641
   zh: d81d15671398d033
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/alternatives-considered:
-  en: 5466618bb5e3d4d9
-  zh: 7d0b6d727e33d0d1
+  en: 0f30bfb95f90999b
+  zh: 1a3fd43ba3136160
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/verification:
-  en: 328fbaca95eac5ff
-  zh: b41fbe45097d3ea9
+  en: ba724b3e62ac7c1e
+  zh: 16a85c96437b1b7a
 /agent-note-resolve-profile-modules-along-the-ancestor-chain-with-an-interception-layer/consequences:
-  en: 4a748267ef8d0480
-  zh: 0ecc79b3c82bf9bb
+  en: 12af38b4fa964640
+  zh: cba0af69c2478324

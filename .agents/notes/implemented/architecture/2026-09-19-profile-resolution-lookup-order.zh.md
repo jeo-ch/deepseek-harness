@@ -42,6 +42,8 @@ runtime resolution 中的每个包名，在这一层上占据 `<拦截层>/<包�
 
 一次裸包名请求的顺序：主线先走完 profile 目录内部的各层（①②），有候选就交给 Node 在候选内解析并返回。走到 ③ 时，runtime resolution 有该包名的条目，Node 就在条目记录的包目录内解析；找到就返回，包内缺文件则按 Node 自身对"已找到包"的处理继续，CommonJS 从 ④ 继续逐层找子路径，ESM 直接报错。runtime resolution 没有条目，Node 就看 ③ 的物理目录，再到 ④。
 
+本体自有的包名无论从哪里发起请求都从安装解析：Harness 包（`@deepseek-ai/dsh-*`）与 Cordis 运行时（`@deepseek-ai/cordis*`、`@deepseek-ai/cosmokit`、`@deepseek-ai/schemastery`）跳过 ① 或 ② 的副本，在 ③ 解析，因此早期 release 装出的 profile 在升级后仍可工作（[决策](2026-10-29-installation-owned-package-precedence.zh.md)）。
+
 Node 仍然负责 `exports`、`imports`、conditions、`main`、子路径、扩展名、缓存与错误码。被选中的包因 `exports` 拒绝某个子路径时报错终局，不会换另一个同名包。
 
 拦截层不读、不写、不删任何磁盘链接。历史残留的软链接一律按普通文件系统内容处理：本体包名在 ③ 上的位置已被 runtime resolution 占据，旧链接永远不会被读到；其余包名按主线正常看到 ③ 里的内容。profile 加载时一次性删除 dsh 0.1.5 系列发布版的 Link 后端写进 profile 的投影：profile `node_modules` 下目标位于 `<profile>/.dsh-module-fallback/node_modules` 内的软链接，以及该目录本身。pnpm 安装的包和其他软链接都保留。
@@ -64,7 +66,7 @@ runtime resolution 在 profile 启动时一次算出，由四部分组成。
 
 - installation 闭包：从当前运行的 dsh 包的 `package.json` 出发，沿 `dependencies` 与 `peerDependencies` 做广度优先遍历，每条边从声明它的 manifest 按 Node 规则解析，同一个包名由第一次找到的已安装包占有。闭包有数百条，约一半在 `@deepseek-ai/` 作用域，一半是第三方库。这些条目对所有 profile 生效。
 - bundle-only 条目：profile 选中的、不属于闭包的 bundle，从它的 manifest 出发做同样的遍历，闭包已占有的包名不覆盖。这些条目只对选中该 bundle 的 profile 生效，用于让 Loader 从 profile 根按裸名导入 bundle 内嵌的插件。
-- 本地包名：profile 直接依赖中已经安装在 `$DSH_HOME/profiles/<name>/node_modules` 的包名。它们本来就在主线 ② 上，记录下来只为免去一次目录探测。
+- 本地包名：profile 直接依赖中已经安装在 `$DSH_HOME/profiles/<name>/node_modules` 的包名。它们本来就在主线 ② 上，记录下来只为免去一次目录探测；本体自有的包名永远不走这条捷径（§2）。
 - linked root：`$DSH_HOME/profiles/<name>/node_modules` 顶层与 `@scope/*` 里目标同时位于共享 profiles 树和当前 profile 目录之外的目录链接，记录链接名称与真实目录。目录自身的 manifest 可缺省。目标缺失或为文件的链接都排除。位于共享树外的应用自有 profile，不会把内部 pnpm store 链接登记为外部 root。
 
 CLI 的安装锚点来自 `import.meta.url`，Node 已对它做过 realpath；Desktop Host 从其运行时目录拼出锚点，该目录不是软链接。两者的安装根目录都等于真实目录，bundle 发现与依赖遍历使用同一个位置。遍历中每一层依赖都以所属包的真实目录作为下一层的查找锚点，并记录声明它的 manifest 位置。命中后 Node 从这个声明位置解析，得到与该包自己内部 import 相同的结果。每个条目记录包名、包目录、版本、声明位置与作用域。已声明但未安装的依赖跳过；bundle 包根自身不成为条目。
@@ -129,7 +131,7 @@ ESM 与 CommonJS 两个适配器调用同一个路由函数，主线程与 Harne
 
 `dsh plugin --profile <name> add <包名 | git spec | file:../本地检出>` 把参数转发给 pnpm，在 profile 目录内以 hoisted 布局安装。profile 的 `pnpm-workspace.yaml` 设置 `autoInstallPeers: false`，插件声明为 peer 的 dsh 包不会被装进 profile，由拦截层提供当前运行安装的那一份，插件与 dsh 共用同一个模块实例。
 
-插件自己的第三方依赖被 hoist 到 `$DSH_HOME/profiles/<name>/node_modules`，按主线 ② 找到。与 installation 闭包同名时最近者优先，插件使用自己声明的版本。`file:` 形式把本地检出复制进 profile，随后的解析与注册表安装完全相同。
+插件自己的第三方依赖被 hoist 到 `$DSH_HOME/profiles/<name>/node_modules`，按主线 ② 找到。与 installation 闭包中的第三方包同名时最近者优先，插件使用自己声明的版本；本体自有或 Cordis 包名始终来自安装（§2）。`file:` 形式把本地检出复制进 profile，随后的解析与注册表安装完全相同。
 
 #### 2. 开发模式：插件仓库在 profile 树外
 
@@ -145,7 +147,7 @@ manifest 的写法与 harness 自身的包相同：需要与宿主共享实例�
 
 **把 runtime resolution 当作插入主线的一整层，而不是占据 ③ 上的包目录。** 两者只在一处不同：CommonJS 命中 runtime resolution 的包后子路径缺失时，前者会再回头读 ③ 上同名的旧副本，后者按 Node 对"已找到的包"的处理直接到 ④。占据包目录与 Node 语义一致，也不需要为 ③ 保留任何额外判断。
 
-**让 installation 闭包条目绝对优先于更近的副本。** 闭包含 281 个第三方库。插件私有的 `zod`、`yaml` 等版本会被安装闭包里的版本覆盖，破坏与 Node 一致的最近者优先。受支持的安装流程已经不把 dsh 的 peer 装进 profile，不需要再用覆盖来保证单实例。
+**让 installation 闭包条目绝对优先于更近的副本。** 闭包含 281 个第三方库。插件私有的 `zod`、`yaml` 等版本会被安装闭包里的版本覆盖，破坏与 Node 一致的最近者优先。受支持的安装流程已经不把 dsh 的 peer 装进 profile，不需要再用覆盖来保证单实例。只对 Harness 与 Cordis 包名生效的窄口径优先级在[本体包优先级决策](2026-10-29-installation-owned-package-precedence.zh.md)中采纳。
 
 **在解析时识别 `.dsh-module-fallback` 形状的软链接并绕过。** 这会为不再产生的目录在查找路径里保留专门逻辑，每次解析都要付出判断。在 profile 加载时一次性删除这些投影能得到同样的结果：一个 bundle 被停用但仍装着时，它投影出来的插件不再遮住 runtime resolution 从另一个 bundle 选出的同名插件。
 
@@ -165,7 +167,7 @@ manifest 的写法与 harness 自身的包相同：需要与宿主共享实例�
 
 ## Verification
 
-- [profile-resolution.spec.ts](../../../../packages/boot/app-boot/tests/profile-resolution.spec.ts) 中的表驱动矩阵：importer 取 profile 根与 profile 内插件，包名取 installation 条目、bundle-only 条目与表外包名，①②③④ 四层的每一种有无组合，②③ 各含真目录与指向别处的软链接两种形态；每格断言 ESM import、CommonJS require、`require.resolve` 与 `packageDir` 元数据落在同一个目录。
+- [profile-resolution.spec.ts](../../../../packages/boot/app-boot/tests/profile-resolution.spec.ts) 中的表驱动矩阵：importer 取 profile 根与 profile 内插件，包名取 installation 条目、bundle-only 条目与表外包名，①②③④ 四层的每一种有无组合，②③ 各含真目录与指向别处的软链接两种形态；每格断言 ESM import、CommonJS require、`require.resolve` 与 `packageDir` 元数据落在同一个目录。installation 条目忽略 private 与 profile 副本，其余包名仍取更近者。
 - 同一文件内的 linked root 用例：`<profile>/node_modules` 的软链接指向树外仓库，仓库 `node_modules` 里放同名 devDependency 副本；包名取声明为 peer 的 installation 条目、声明为 dependency 的 installation 条目、仓库自己的第三方 dependency、未声明的包名，importer 取仓库自身文件与仓库内传递依赖；断言四种解析方式一致、devDependency 副本不被读到，以及改写 `peerDependencies` 后下一次解析立即按新声明进行。
 - [差分矩阵](../../../../packages/boot/app-boot/tests/linked-resolution-matrix.spec.ts)构造独立的原生、拦截与参考目录。只有参考副本把合格 peer 位置替换为运行时包的链接，再让 Node 解析文件。单包与 pnpm monorepo 用例对比入口、文件、目录、import/require、`import.meta.resolve` 与显式路径的结果，覆盖 manifest 缺失、`node_modules` 缺失、错误 peer 声明、React、作用域外 helper 和旧式子路径继续查询。断言比较选包、现存路径、错误码与模块实例；显式 paths 使用未投射的原生参考。
 - 同一文件内的专项用例覆盖表 1 各行：有无 `exports` 的裸包名与子路径、`#alias`、显式 `paths`、包自引用、命中 runtime resolution 后 CommonJS 子路径缺失时跳过 ③ 直接到 ④，以及树外 profile 的拦截位置。
@@ -175,7 +177,7 @@ manifest 的写法与 harness 自身的包相同：需要与宿主共享实例�
 
 买到的：模块解析无需磁盘投影；命中拦截层的 dsh 本体包来自当前运行的安装，link 到树外的插件声明的 peer 也适用；其余解析保留 Node 的祖先链和包入口规则；解析路径不识别历史投影目录。
 
-付出的：installation 闭包中的第三方库仍占据 ③ 上的包目录；profile 插件没有更近副本时会使用安装中的版本。linked 请求只在匹配的 peer 位置选中运行时包，更近的物理副本仍优先。开发者需要相应安排声明与依赖位置。runtime resolution 不校验 peer 版本范围。
+付出的：installation 闭包中的第三方库仍占据 ③ 上的包目录；profile 插件没有更近副本时会使用安装中的版本。本体自有或 Cordis 包名的更近副本永远不会被加载，固定这些版本的 profile 会得到安装中的版本。linked 请求只在匹配的 peer 位置选中运行时包，更近的物理副本仍优先。开发者需要相应安排声明与依赖位置。runtime resolution 不校验 peer 版本范围。
 
 只有 `<profile>/node_modules` 的直接链接成为 linked root；依赖真实目录在所有已记录根之外时使用原生 Node。peer 请求不会回到 profile 的 ②：运行时表不提供的包名必须能在真实祖先链上找到。linked 请求承担实时读取 peer manifest 的成本。同一链接换目标仍需重启；模块缓存失效与自动监视不属于这条规则。
 

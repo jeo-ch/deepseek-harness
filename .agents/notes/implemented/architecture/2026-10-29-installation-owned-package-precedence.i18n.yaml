@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-10-29-installation-owned-package-precedence.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-29-installation-owned-package-precedence.md
+/agent-note-give-installation-owned-package-names-precedence-over-profile-copies:
+  en: 0b2a95f4b693ccac
+  zh: 72a299216c15a420
+/agent-note-give-installation-owned-package-names-precedence-over-profile-copies/problem:
+  en: e48e238eee36843a
+  zh: 582619dbc7dc9eaa
+/agent-note-give-installation-owned-package-names-precedence-over-profile-copies/decision:
+  en: a15c7c13f167e5ac
+  zh: a15c7c13f167e5ac
+/agent-note-give-installation-owned-package-names-precedence-over-profile-copies/decision/the-installation-owned-set:
+  en: 1aceef355c06d105
+  zh: 814735bf2bd59411
+/agent-note-give-installation-owned-package-names-precedence-over-profile-copies/decision/where-precedence-applies:
+  en: 1358c227ad2ad9f4
+  zh: b3aab66646cb4d1d
+/agent-note-give-installation-owned-package-names-precedence-over-profile-copies/alternatives-considered:
+  en: 92777521158b9893
+  zh: 8248437a4cc63edf
+/agent-note-give-installation-owned-package-names-precedence-over-profile-copies/consequences:
+  en: 9417049dd5e7ab97
+  zh: 44d42b2064f89a46
