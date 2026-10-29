@@ -9,11 +9,10 @@ name: Desktop builds · unsigned
 # Artifacts land under apps/desktop/.desktop-build/targets/<target>/unsigned-artifacts/;
 # the Desktop package scripts own preparation, smoke checks, and the file names.
 #
-# Publish only from a release tag. The running app resolves a profile's installed
-# packages before its own bundled ones, so an app built from a branch head whose
-# bundled `@deepseek-ai/dsh-*` packages lead the npm-published copies makes every
-# profile load the older npm copy — a missing `ProjectionHandle.stateOf`, for
-# example. A `dsh-v*` tag push publishes into that tag's release; a manual run
+# Publish only from a release tag. Installation-owned packages always resolve from
+# the running app, so a branch-head build no longer loads an older npm copy from a
+# profile, but published assets should still correspond to the commit their tag
+# names. A `dsh-v*` tag push publishes into that tag's release; a manual run
 # packages the requested ref (default: the latest `dsh-v*` tag) into the rolling
 # `desktop-build-v<version>` prerelease, replacing the assets of the same name.
 # Branch pushes verify packaging without publishing, keeping the installers that
@@ -243,7 +242,7 @@ jobs:
           case "$SOURCE_REF" in
             dsh-v*) ;;
             *)
-              echo "::warning::Source $SOURCE_REF is not a dsh-v* release tag; its bundled core packages may not match the npm-published ones a profile installs."
+              echo "::warning::Source $SOURCE_REF is not a dsh-v* release tag; these assets do not correspond to a released commit."
               ;;
           esac
           ( cd release-assets && sha256sum -- *.dmg *.exe > SHA256SUMS )
