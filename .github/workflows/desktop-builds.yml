@@ -12,8 +12,10 @@ name: Desktop builds · unsigned
 # Publish only from a release tag. Installation-owned packages always resolve from
 # the running app, so a branch-head build no longer loads an older npm copy from a
 # profile, but published assets should still correspond to the commit their tag
-# names. A `dsh-v*` tag push publishes into that tag's release; a manual run
-# packages the requested ref (default: the latest `dsh-v*` tag) into the rolling
+# names. A release tag push publishes into that tag's release; the fork carries
+# both upstream `v*` tags and its own `dsh-v*` tags, so both families publish. A
+# manual run packages the requested ref (default: the latest reachable release
+# tag, or the dispatched commit when none is reachable) into the rolling
 # `desktop-build-v<version>` prerelease, replacing the assets of the same name.
 # Branch pushes verify packaging without publishing, keeping the installers that
 # outlive the 14-day Actions retention tied to a released commit.
@@ -22,12 +24,12 @@ on:
   push:
     branches: [master, main]
     # Release tags publish the same unsigned installers.
-    tags: ['dsh-v*']
+    tags: ['dsh-v*', 'v*']
   pull_request:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Tag, branch, or commit to package (default: the latest dsh-v* tag)'
+        description: 'Tag, branch, or commit to package (default: the latest release tag, else the dispatched commit)'
         type: string
         required: false
         default: ''
@@ -90,7 +92,7 @@ jobs:
             echo "\`$REQUESTED_REF\` is not a tag, branch, or commit in this repository."
             echo
             echo "Release tags available here:"
-            git tag --list 'dsh-v*' --sort=-v:refname | head -5 | sed 's/.*/- `&`/'
+            git tag --list 'dsh-v*' 'v*' --sort=-v:refname | head -5 | sed 's/.*/- `&`/'
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
@@ -102,10 +104,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ref=$(git describe --tags --abbrev=0 --match 'dsh-v*' || true)
+          # Upstream release tags are `v*`; the fork's own are `dsh-v*`. `desktop-build-v*`
+          # rolling tags never match either pattern, so they cannot select themselves.
+          ref=$(git describe --tags --abbrev=0 --match 'dsh-v*' --match 'v*' 2>/dev/null || true)
           if [ -z "$ref" ]; then
-            echo "::error::No dsh-v* tag is available; push a release tag or pass the ref input."
-            exit 1
+            # No release tag is reachable from the dispatched branch: package the
+            # commit the dispatch ran at instead of failing the whole run.
+            ref="$GITHUB_SHA"
+            echo "::warning::No release tag is reachable; packaging the dispatched commit $ref."
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "Packaging \`$ref\`." >> "$GITHUB_STEP_SUMMARY"
@@ -207,7 +213,7 @@ jobs:
     name: Attach installers to a GitHub release
     needs: [prepare, package]
     # Only a release tag publishes automatically. A manual run publishes when asked,
-    # and the notes warn when its source ref is not a `dsh-v*` tag. Fork pull
+    # and the notes warn when its source ref is not a release tag. Fork pull
     # requests have a read-only token, and their builds are throwaway.
     if: >-
       (github.event_name == 'push' && github.ref_type == 'tag')
@@ -240,9 +246,9 @@ jobs:
             tag="desktop-build-v$version"
           fi
           case "$SOURCE_REF" in
-            dsh-v*) ;;
+            dsh-v* | v*) ;;
             *)
-              echo "::warning::Source $SOURCE_REF is not a dsh-v* release tag; these assets do not correspond to a released commit."
+              echo "::warning::Source $SOURCE_REF is not a release tag; these assets do not correspond to a released commit."
               ;;
           esac
           ( cd release-assets && sha256sum -- *.dmg *.exe > SHA256SUMS )
