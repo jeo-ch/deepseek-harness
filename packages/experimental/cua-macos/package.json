@@ -103,7 +103,8 @@
   },
   "scripts": {
     "build:native": "xcrun python3 native/build_app.py",
-    "build:icon": "node native/generate_icon.mjs"
+    "build:icon": "node native/generate_icon.mjs",
+    "prepack": "node scripts/prepare-cua-native.mjs"
   },
   "os": [
     "darwin"
