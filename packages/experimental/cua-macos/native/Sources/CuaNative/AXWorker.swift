@@ -424,7 +424,8 @@ actor AXWorker {
                 }
                 elementWindow = enclosing.element
                 guard let bounds = try ax().bounds(selected), bounds.width > 0, bounds.height > 0 else { throw NativeFailure(code: "NATIVE_ERROR", message: "Element has no pointer bounds") }
-                window = try WindowGeometry.resolve(owner: identity, windowID: enclosing.id) { try ax().bounds(enclosing.element) }
+                let observedElement = enclosing.element
+                window = try WindowGeometry.resolve(owner: identity, windowID: enclosing.id) { try ax().bounds(observedElement) }
                 point = WindowPoint(x: bounds.x + bounds.width / 2 - window.bounds.x, y: bounds.y + bounds.height / 2 - window.bounds.y)
             } else {
                 let id = try params.windowID()
